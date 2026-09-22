@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from .core import building_label, search_empty_rooms, validate_period_range
 from .credentials import CredentialError, get_username, save_credentials
-from .models import MAX_PERIOD, Preference
+from .models import MAX_PERIOD, Preference, SyncState
 from .storage import (
     ROOT_DIR,
     get_connection,
@@ -42,14 +42,20 @@ class CredentialPayload(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    current_day = _current_local_date()
     conn = get_connection()
     init_db(conn)
-    prune_occupancies_outside_retention_window(conn, date.today())
+    prune_occupancies_outside_retention_window(conn, current_day)
     state = get_sync_state(conn)
     conn.close()
-    if state.last_sync_date != date.today():
-        asyncio.create_task(_startup_sync())
-    yield
+    startup_sync_task: asyncio.Task[None] | None = None
+    if _needs_startup_sync(state, current_day):
+        startup_sync_task = asyncio.create_task(_startup_sync())
+    try:
+        yield
+    finally:
+        if startup_sync_task is not None:
+            await startup_sync_task
 
 
 async def _startup_sync() -> None:
@@ -59,8 +65,17 @@ async def _startup_sync() -> None:
         pass
 
 
-def create_app() -> FastAPI:
+def _current_local_date() -> date:
+    return date.today()
+
+
+def _needs_startup_sync(state: SyncState, current_day: date) -> bool:
+    return state.last_sync_date != current_day
+
+
+def create_app(shutdown_at: datetime | None = None) -> FastAPI:
     app = FastAPI(title="BJTU Room Finder", lifespan=lifespan)
+    app.state.shutdown_at = shutdown_at
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
@@ -84,6 +99,11 @@ def create_app() -> FastAPI:
                 else None,
                 "status": sync_state.status,
                 "message": sync_state.message,
+            },
+            "runtime": {
+                "shutdown_at": app.state.shutdown_at.isoformat()
+                if app.state.shutdown_at
+                else None,
             },
             "rooms_count": rooms_count,
             "has_username": bool(get_username()),

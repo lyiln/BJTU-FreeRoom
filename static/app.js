@@ -180,11 +180,30 @@ async function loadStatus() {
     if (sync.status === "error") {
       pieces.push(`同步错误：${sync.message}`);
     }
+    const shutdownTime = formatShutdownTime(payload.runtime?.shutdown_at);
+    if (shutdownTime) {
+      pieces.push(`服务将在 ${shutdownTime} 自动关闭`);
+    }
     statusText.textContent = pieces.join(" · ");
     accountButton.textContent = payload.has_username ? "账号已保存" : "保存教务账号";
   } catch (error) {
     statusText.textContent = `状态读取失败：${error.message}`;
   }
+}
+
+function formatShutdownTime(value) {
+  if (!value) {
+    return null;
+  }
+  const shutdownAt = new Date(value);
+  if (Number.isNaN(shutdownAt.getTime())) {
+    return null;
+  }
+  return shutdownAt.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 async function loadBuildings() {

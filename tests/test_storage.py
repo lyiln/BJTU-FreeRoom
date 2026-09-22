@@ -4,12 +4,14 @@ from datetime import date
 
 from bjtu_rooms.models import Occupancy, Room
 from bjtu_rooms.storage import (
+    get_sync_state,
     get_connection,
     init_db,
     load_occupancy_by_room,
     load_rooms,
     occupancy_retention_window,
     prune_occupancies_outside_retention_window,
+    save_sync_state,
     upsert_rooms_and_occupancies,
 )
 
@@ -89,3 +91,31 @@ def test_prune_occupancies_keeps_current_and_next_week(tmp_path) -> None:
     assert occupancy_retention_window(reference_day) == (current_week_start, next_week_end)
     assert deleted_count == 2
     assert remaining_days == [current_week_start.isoformat(), next_week_end.isoformat()]
+
+
+def test_failed_sync_does_not_create_a_successful_sync_date(tmp_path) -> None:
+    conn = get_connection(tmp_path / "rooms.sqlite3")
+    init_db(conn)
+
+    save_sync_state(conn, synced_day=None, status="error", message="failed")
+    state = get_sync_state(conn)
+    conn.close()
+
+    assert state.last_sync_date is None
+    assert state.status == "error"
+    assert state.message == "failed"
+
+
+def test_failed_sync_preserves_the_last_successful_sync_date(tmp_path) -> None:
+    conn = get_connection(tmp_path / "rooms.sqlite3")
+    init_db(conn)
+    successful_day = date(2026, 9, 22)
+    save_sync_state(conn, synced_day=successful_day, status="ok", message="done")
+
+    save_sync_state(conn, synced_day=None, status="error", message="later failure")
+    state = get_sync_state(conn)
+    conn.close()
+
+    assert state.last_sync_date == successful_day
+    assert state.status == "error"
+    assert state.message == "later failure"

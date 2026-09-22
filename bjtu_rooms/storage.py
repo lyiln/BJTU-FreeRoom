@@ -257,7 +257,7 @@ def save_sync_state(
         insert into sync_state (id, last_sync_date, last_sync_at, status, message)
         values (1, ?, ?, ?, ?)
         on conflict(id) do update set
-            last_sync_date = excluded.last_sync_date,
+            last_sync_date = coalesce(excluded.last_sync_date, sync_state.last_sync_date),
             last_sync_at = excluded.last_sync_at,
             status = excluded.status,
             message = excluded.message
