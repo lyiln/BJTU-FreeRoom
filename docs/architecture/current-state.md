@@ -1,10 +1,20 @@
 # BJTU Room Finder Current State
 
 ## Scope
-- 当前文档覆盖：代码库功能边界、前后端入口、搜索/同步数据流、数据库读写、外部依赖、2026-09-08 修复的错误教学周同步问题，以及 2026-09-22 增加的定时退出和按成功日期自动同步行为。
+- 当前文档覆盖：代码库功能边界、前后端入口、搜索/同步数据流、数据库读写、外部依赖、2026-09-08 修复的错误教学周同步问题、2026-09-22 增加的定时退出和按成功日期自动同步行为，以及 2026-10-09 增加的按页面打开时间设置默认日期和节次。
 - 本次运行时检查没有输出账号内容；已使用现有系统凭据执行线上同步，并通过 SQLite 聚合统计和搜索结果验证。
 
-## Latest Confirmed Change (2026-09-22)
+## Latest Confirmed Change (2026-10-09)
+- `static/app.js:PERIOD_SCHEDULE` 定义普通楼栋的 1–7 节时间：08:00–09:50、10:10–12:00、12:10–14:00、14:10–16:00、16:20–18:10、19:00–20:50、21:00–21:50。时间来自用户提供的课表截图，不通过教务同步动态更新。
+- `getDefaultSearchSelection(now)` 使用传入时间的本地日期和时分，选择当天尚未结束的第一节；到达下课时间即推进到下一节，21:50 起通过 `setDate()` 选择次日第一节，不跳过周末，不修改传入的时间对象。
+- `init()` 只读取一次浏览器本机时间，并把日期和起止节次设置为计算结果；例如 2026-10-09 16:07 为当天第 5 节到第 5 节。打开或刷新页面仍只加载状态、楼栋和偏好，不自动搜索；初始化后没有时间驱动的默认值更新。
+- 用户确认 YF 第二节实际为 10:30–12:20，本次统一使用普通楼栋时间，选择 YF 也不重新匹配；12:00–12:20 默认第三节，查询 YF 第二节需要手动选择。后端 API、数据库和同步流程未改动。
+- `tests/test_frontend.py` 使用真实 Chromium 加载本地 HTML/JS，并拦截 API 为固定响应；覆盖全部 7 个下课边界的前一秒/准确时刻、课前/课中/课间、月末/年末/闰日、周末跨日、手动选择、日期快捷入口、刷新重新匹配及查询参数。浏览器时区固定为 Asia/Shanghai，时钟由测试控制。
+- 2026-10-09 浏览器验收：35 项前端测试通过；16:07 查询请求使用 `date=2026-10-09&start_period=5&end_period=5`，21:50 刷新后选择次日第 1 节，手动值在时间推进后保留。此验收使用隔离的本地页面和固定 API 响应，未调用线上教务同步或验证当前运行服务的数据。
+- 最终回归：`.venv/bin/pytest -q` 共 64 项测试通过，`git diff --check` 通过。此次只修改静态前端和测试/说明文档，无后端 Python 变更，无需因本次改动重启服务；已打开页面需要刷新以加载新默认逻辑。
+- 前端回归测试需要先安装 Playwright Chromium（README 的启动步骤已包含 `uv run playwright install chromium`）；无需新增 Python 依赖。在 macOS 的受限执行沙箱中，Chromium 启动可能需要沙箱外执行权限。
+
+## Previous Confirmed Change (2026-09-22)
 - `bjtu-rooms` 默认在进程启动 30 分钟后请求 Uvicorn 优雅退出；`--shutdown-after-minutes` 可覆盖时长，值为 `0` 时禁用。自动退出只停止本地服务，不关闭浏览器标签。
 - CLI 通过可控的 `uvicorn.Server` 实例和异步计时任务实现退出；服务提前停止时会取消计时任务，到期时设置 `server.should_exit`，由 Uvicorn 停止接收新请求并等待在途请求。
 - `create_app(shutdown_at=...)` 把带时区的预计退出时间注入应用；`GET /api/status` 通过 `runtime.shutdown_at` 返回 ISO 8601 时间或 `null`，前端状态区将其格式化为本地时分。
@@ -81,7 +91,7 @@
 | 状态 API | `bjtu_rooms/app.py` | `GET /api/status` | 返回 `sync`、`runtime.shutdown_at`、`rooms_count`、`has_username`。 |
 | 搜索 API | `bjtu_rooms/app.py` | `GET /api/search` | 读取数据库后调用 `search_empty_rooms()`。 |
 | 同步 API | `bjtu_rooms/app.py` | `POST /api/sync` | 调用 `sync_today()`。 |
-| 前端初始化 | `static/app.js` | `init()` | 设置今天日期、填充节次、加载状态/楼栋/偏好。 |
+| 前端初始化 | `static/app.js` | `init()` / `getDefaultSearchSelection()` | 按打开时本机时间设置日期和单节范围、填充节次、加载状态/楼栋/偏好。 |
 | 日期快捷入口 | `static/index.html` / `static/app.js` | `todayButton` / `tomorrowButton` / `setDateFromToday()` | 点击“今天”或“明天”设置日期；已有搜索结果时自动重新查询。 |
 
 ## Call Chain
@@ -124,6 +134,7 @@
 | Data | From | To | Evidence |
 |---|---|---|---|
 | Search parameters | `static/app.js:runSearch()` | `/api/search` query string | Uses `URLSearchParams` with date/start/end/building. |
+| Initial date and period | Browser local clock + `PERIOD_SCHEDULE` | `getDefaultSearchSelection()` -> date/start/end inputs | One snapshot at page initialization; first unfinished period, or next calendar day period 1 after 21:50. No initial search. |
 | Date shortcut selection | `static/app.js:setDateFromToday()` | `dateInput.value` -> optional `runSearch()` | Offset 0 selects local today; offset 1 selects local tomorrow; if `hasSearched` is true, it reruns search. |
 | Rooms | SQLite `rooms` table | `load_rooms()` -> `search_empty_rooms()` | `storage.load_rooms()` returns `list[Room]`. |
 | Occupancies | SQLite `occupancies` table | `load_occupancy_by_room()` -> `search_empty_rooms()` | `storage.load_occupancy_by_room()` groups records by raw room name. |
@@ -188,6 +199,7 @@
 - Frontend data-shape safeguards currently exist for arrays from `payload.items`, `payload.preferred_buildings`, `payload.preferred_room_prefixes`, building list items, missing `payload.sync`, and missing `period_statuses`.
 
 ## Edge Cases
+- 页面默认值统一按普通楼栋课表计算；YF 第二节 10:30–12:20 的差异不参与匹配。日期快捷入口只改日期，不重新匹配节次；刷新页面会根据刷新时的本机时间重新初始化。
 - `period_statuses` missing from an older running backend response shows “暂无状态” in the UI. This prevents a frontend crash but means the Python service likely needs restart to load current code.
 - `bjtu_rooms.cli:main()` starts uvicorn without reload. Static files may reflect disk changes immediately, while Python route logic can stay stale until restart.
 - `sync_today()` raises `SyncError` if no rooms are parsed.
@@ -200,6 +212,7 @@
 ## Risks
 | Risk | Evidence | Impact | Suggested Next Step |
 |---|---|---|---|
+| 默认节次依赖固定课表和浏览器本机时钟。 | `static/app.js:PERIOD_SCHEDULE` / `getDefaultSearchSelection()`；用户确认的 YF 差异。 | 校方调整作息、本机时间不准或 YF 第二节尚未结束时，默认节次可能不符合实际使用需求。 | 当前可手动改节次；课表调整时更新固定配置，按楼栋匹配另行确认需求。 |
 | Running service can be stale after code changes. | `cli.py` uses `reload=False`; previous issue manifested as frontend expecting `period_statuses` while old backend did not return it. | UI can show fallback “暂无状态” or mismatch current code. | Restart `uv run bjtu-rooms` after backend code changes; use reload command for development. |
 | Startup sync errors are not logged to the terminal. | `_startup_sync()` catches `Exception` after `sync_today()` records the error. | The page shows the stored error, but terminal-only users may miss it. | Consider adding structured terminal logging if operational diagnosis becomes difficult. |
 | A background sync can delay automatic shutdown. | Lifespan shutdown awaits the startup sync task by design. | Exit can occur later than the nominal deadline while Playwright requests finish. | Existing page operations have 30-second timeouts; add a hard shutdown deadline only if delayed exits become a problem. |

@@ -23,6 +23,8 @@ uv run bjtu-rooms --shutdown-after-minutes 0
 
 ## Development
 
+测试包含 Chromium 前端回归；首次运行前需完成上面的 `uv run playwright install chromium`。
+
 ```bash
 uv run pytest
 uv run uvicorn bjtu_rooms.app:create_app --factory --reload
@@ -40,6 +42,7 @@ BJTU 教室页是周视图，页面里的 `星期一 06月29日` 这类表头会
 
 ## Notes
 
+- 页面打开或刷新时，按本机时间默认选择当天尚未结束的一节；21:50 起选择次日第一节。默认值统一采用普通楼栋课表，YF 第二节 10:30–12:20 的差异需手动调整。页面不会自动查询，也不会随时间覆盖手动选择。
 - 每次启动会读取本机当前日期；如果今天尚未成功同步，会在后台尝试自动同步。
 - 同步失败不会清除之前成功同步的日期；当天只要成功过一次，再次启动就不会重复自动同步。
 - 页面状态区会显示本次服务预计自动关闭的时间；禁用自动退出时不显示。

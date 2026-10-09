@@ -20,19 +20,45 @@ const passwordInput = document.querySelector("#passwordInput");
 const resultCount = document.querySelector("#resultCount");
 const resultsBody = document.querySelector("#resultsBody");
 const toast = document.querySelector("#toast");
+// 普通楼栋时间表；YF 第二节的 10:30–12:20 差异不参与默认匹配。
+const PERIOD_SCHEDULE = [
+  { start: "08:00", end: "09:50" },
+  { start: "10:10", end: "12:00" },
+  { start: "12:10", end: "14:00" },
+  { start: "14:10", end: "16:00" },
+  { start: "16:20", end: "18:10" },
+  { start: "19:00", end: "20:50" },
+  { start: "21:00", end: "21:50" },
+];
 let hasSearched = false;
 
 init();
 
 function init() {
-  const today = new Date();
-  dateInput.value = formatLocalDate(today);
+  const defaults = getDefaultSearchSelection(new Date());
+  dateInput.value = defaults.date;
   fillPeriods();
-  startPeriod.value = "1";
-  endPeriod.value = "2";
+  startPeriod.value = String(defaults.period);
+  endPeriod.value = String(defaults.period);
   loadStatus();
   loadBuildings();
   loadPreferences();
+}
+
+function getDefaultSearchSelection(now) {
+  const targetDate = new Date(now.getTime());
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const index = PERIOD_SCHEDULE.findIndex(({ end }) => {
+    const [hour, minute] = end.split(":").map(Number);
+    return currentMinutes < hour * 60 + minute;
+  });
+  if (index === -1) {
+    targetDate.setDate(targetDate.getDate() + 1);
+  }
+  return {
+    date: formatLocalDate(targetDate),
+    period: index === -1 ? 1 : index + 1,
+  };
 }
 
 function fillPeriods() {
